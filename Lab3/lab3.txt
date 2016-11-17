@@ -1,0 +1,75 @@
+Lab3 - Add rules to implement a simple stateful firewall between VMs
+-------------------------------------------------------------------------------
+
+The Agilio OVS Firewall software provides a means to add rules based on state
+to the Agilio OVS switch. These can be used to provide or deny access based on
+the flow a packet belongs to rather than just by using the packet information
+itself. The process of gathering flow state information is referred to as
+Connection Tracking (or ConnTrack, within the Linux kernel). Gathering state
+information is considered an Action for an Agilio OVS rule. Therefore, to match
+on state information, the packet must pass through the switch twice - once to
+get the state information and once to match the state information. In this
+example, two states of a flow are considered:
+
+* NEW - This packet is setting up a new flow
+* EST - This packet is part of an already established flow
+
+1. Enter the following rules (and delete old ones):
+
+ovs-ofctl del-flows br0
+
+ovs-ofctl add-flow br0 \ "priority=60,ct_state=-trk,icmp,action=ct(commit,table=0)"
+
+ovs-ofctl add-flow br0 \ "priority=50,ct_state=+trk+new,icmp,nw_dst=10.0.0.2,action=3"
+
+ovs-ofctl add-flow br0 \ "priority=50,ct_state=+trk+new,icmp,nw_dst=10.0.0.1,action=drop"
+
+ovs-ofctl add-flow br0 \ "priority=50,ct_state=+trk+est,icmp,nw_dst=10.0.0.1,action=2"
+
+ovs-ofctl add-flow br0 \ "priority=50,ct_state=+trk+est,icmp,nw_dst=10.0.0.2,action=3"
+
+ovs-ofctl add-flow br0 "priority=20,arp,action=NORMAL"
+
+
+Then do a watch on the rules added:
+
+watch -n 0.1 ovs-ofctl dump-flows br0
+
+
+2. On VM1 do a ping to VM2 as such:
+
+root@vm1:~# ping 10.0.0.2
+
+-------------------------------------------------------------------------------
+PING 10.0.0.2 (10.0.0.2) 56(84) bytes of data.
+64 bytes from 10.0.0.2: icmp_seq=1 ttl=64 time=0.818 ms
+64 bytes from 10.0.0.2: icmp_seq=2 ttl=64 time=0.353 ms
+64 bytes from 10.0.0.2: icmp_seq=3 ttl=64 time=0.342 ms
+-------------------------------------------------------------------------------
+
+The pings should successfully complete. In the ovs-ofctl rule counters, the
+‘send to conntrack’ rule will be matched by every ICMP packet entering the
+system (twice for every ping - one in each direction). These packets should
+then recirculate and match another rule; the first packet matches the +new
+rule; the others match an established rule depending on their direction.
+
+3. Make sure the ping is killed on VM1. Now move to VM2 and try to ping VM1:
+
+root@test2:~# ping 10.0.0.1
+
+-------------------------------------------------------------------------------
+PING 10.0.0.1 (10.0.0.1) 56(84) bytes of data.
+^C
+--- 10.0.0.1 ping statistics ---
+12 packets transmitted, 0 received, 100% packet loss, time 10999ms
+-------------------------------------------------------------------------------
+
+This time the pings should fail. In the ovs-ofctl counters, all packets should
+again be matching the ‘send to conntrack’ rule and recirculating, however, on
+recirculation, they will hit the +new rule that causes them to drop.
+
+The previous two examples show a simple stateful firewall that allows packets
+to travel in both directions if the packet’s flow was initiated from a trusted
+end-point (VM1). If the packets are from a flow initiated by an untrusted
+end-point (VM2) then they are not permitted to pass.
+

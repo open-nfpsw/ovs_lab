@@ -1,0 +1,128 @@
+Lab1 - Add rules and send traffic from physical port to VM
+-------------------------------------------------------------------------------
+
+1. Remove any default rules that may already be on the system.
+
+ovs-ofctl del-flows br0
+
+
+2. Add a new rule to the switch as follows:
+
+ovs-ofctl add-flow br0 "in_port=1,action=2"
+
+This is a basic rule that matches all packets coming in on port 1 and sends
+them out port 2. Ports 1 and 2 correspond to the OVS ports that were assigned
+to the interfaces in the last section. In this example, port 1 is the physical
+port sdn_p0 and port 2 is the VF port sdn_v0.2 that is linked to a VM. Rules
+that are added to the switch can be viewed with the instruction:
+
+ovs-ofctl dump-flows br0
+
+-------------------------------------------------------------------------------
+NXST_FLOW reply (xid=0x4):
+ cookie=0x0, duration=293.854s, table=0, n_packets=0, n_bytes=0, idle_age=293,
+ priority=10,in_port=1 actions=output:2
+-------------------------------------------------------------------------------
+
+With this rule added, traffic sent in the physical port on the SmartNIC will be
+directed to the specified virtual machine. 
+
+3. Gain access to VM1 by opening up another terminal and connecting to the
+machine running OVS. Then find the IP address of the VM by using arp:
+
+arp
+-------------------------------------------------------------------------------
+Address             HWtype  HWaddress           Flags Mask  Iface
+192.168.122.52      ether   52:54:00:11:fd:02   C           virbr0
+172.20.2.9          ether   f0:1f:af:f1:17:a6   C           em1
+192.168.122.53      ether   52:54:00:11:fd:01   C           virbr0
+172.20.0.1          ether   00:07:0e:7e:d8:f2   C           em1
+-------------------------------------------------------------------------------
+
+There should be two IP addresses of the form 192.168.122.x returned. These
+correspond to the two VMs running on the server - note that virbr0 is this
+network interface they are connected on. From the server, SSH (as root) to the
+IP address that corresponds to the MAC address ending in 01 (this is VM1 which
+has been attached to sdn_v0.2):
+
+ssh root@192.168.122.53
+
+The password to enter is netronome.
+
+When on the VM, run the following command:
+
+/opt/netronome/libexec/dpdk_nic_bind.py --status
+
+-------------------------------------------------------------------------------
+0000:c4:08.2 'Device 6003' if=eth1 drv=nfp_netvf unused=
+-------------------------------------------------------------------------------
+
+The response above indicates that a VF cut through connecting the VM to the NFP
+is active on netdev eth1. This netdev is now the link from the VM to our
+SmartNIC. Run TCPDump on this interface to sniff for UDP packets as follows:
+
+tcpdump -n udp -i eth1
+
+Leave this running while continuing on to the next steps.
+
+4.  Now send some traffic!
+In another new terminal logon the machine with a wired connection to the Agilio
+SmartNIC port. Send 100 UDP packets out of this port and into the SmartNIC by
+doing the following (this assumes a pcap of UDP packet on the system):
+
+tcpreplay -i p1p1 -L 100 /root/udp_traffic.pcap
+
+Back on VM1 the packets should be captured by TCPDump.
+
+To view the activity on the switch, the rules can again be checked:
+
+ovs-ofctl dump-flows br0
+
+-------------------------------------------------------------------------------
+NXST_FLOW reply (xid=0x4):
+ cookie=0x0, duration=1247.806s, table=0, n_packets=100, n_bytes=14714,
+ idle_age=53, in_port=1 actions=output:2
+-------------------------------------------------------------------------------
+
+It should be clear from the stats that 100 packets have matched the added rule
+and have been directed to VM1.
+
+The ovs-ofctl rules correspond to the user-space rules within Agilio OVS. When
+one of these is matched, a ‘fast-path’ rule is added to the OVS linux kernel
+module and, in turn, the Agilio SmartNIC. Future packets can then match on the
+SmartNIC and have actions applied without requiring any host CPU time. 
+
+These datapath rules have a default idle timeout of 0.5 seconds. To make them
+easier to view, this timeout can be turned off by entering the following
+command:
+
+ovs-vsctl set Open_vSwitch . other_config:max-idle=-1
+
+Now if we transmit the 100 UDP packets again, the datapath rules sent to the
+SmartNIC will remain there without timing out. Resend the UDP packets using the
+previous command. Then view the datapath rules with the following: 
+
+ovs-dpctl dump-flows
+
+-------------------------------------------------------------------------------
+recirc_id(0),in_port(3),eth_type(0x0800),ipv4(frag=no), packets:2, bytes:684,
+used:2.984s, actions:drop
+recirc_id(0),in_port(2),eth_type(0x0800),ipv4(frag=no), packets:98,
+bytes:14430, used:15.980s, actions:3
+-------------------------------------------------------------------------------
+
+The datapath rules should look similar to the user-space rules but may contain
+extra fields depending on the particular packets that have matched in
+user-space. When 100 packets are sent through it is expected that fewer than
+the 100 will match the datapath rules. The first few packets will go to
+user-space to trigger the creation of the datapath rule. The rest of the
+packets will then match this datapath rule on the SmartNIC (98 out of 100 in
+the above case). Note that there may be some other rules here - these are
+created by other network packets (e.g. ARPs) that enter the system but do not
+match a user-space rule and are given the  default ‘drop’ action.
+
+To prevent any strange behaviour or mismatches as the lab continues, reset the
+datapath rule timeout to 500 milliseconds.
+
+ovs-vsctl set Open_vSwitch . other_config:max-idle=500
+

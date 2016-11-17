@@ -1,0 +1,57 @@
+Lab2 - Add rules to ping from VM to VM
+-------------------------------------------------------------------------------
+
+Keep the terminal connection to VM1 open (if lab1 was completed - if not then
+open one based on the instructions in lab1.txt) and in a new terminal connect
+to VM2.  This can be done in the same way as you connected to VM1 in lab1.txt 
+(VM2 has the 192.x.x.x IP address corresponding to the mac finishing in 02).
+There should now be three terminals in view, one directly connected to the OVS
+machine and one connected to both VM1 and VM2.
+
+1. Assign IP addresses to the VF netdevs on the VMs. In the VM1 terminal run the following: 
+
+ifconfig eth1 10.0.0.1
+
+and in VM2:
+
+ifconfig eth1 10.0.0.2
+
+2.  Delete the previous rules from the switch and add new rules as follows:
+
+ovs-ofctl del-flows br0
+
+ovs-ofctl add-flow br0 "icmp,nw_dst=10.0.0.1,action=2"
+
+ovs-ofctl add-flow br0 "icmp,nw_dst=10.0.0.2,action=3"
+
+ovs-ofctl add-flow br0 "arp,action=NORMAL"
+
+These rules match ICMP traffic and direct the packets to a specified port based
+on their destination IP address. The final rule handles ARP traffic by giving
+it the NORMAL action. This basically forwards ARP packets to all ports with the
+exception of the port it arrived on (the same way that a simple L2 learning
+switch may do).
+
+3. In the main server terminal window run the following command:
+
+watch -n 0.1 ovs-ofctl dump-flows br0
+
+This adds a watch on the flow rules so traffic can be seen matching the rules
+as it passes through.
+
+With the watch command still running, go to VM1 and ping VM2 using its IP
+address. For example:
+
+root@vm1:~# ping 10.0.0.2
+
+-------------------------------------------------------------------------------
+PING 10.0.0.2 (10.0.0.2) 56(84) bytes of data.
+64 bytes from 10.0.0.2: icmp_seq=1 ttl=64 time=0.818 ms
+64 bytes from 10.0.0.2: icmp_seq=2 ttl=64 time=0.353 ms
+64 bytes from 10.0.0.2: icmp_seq=3 ttl=64 time=0.342 ms
+-------------------------------------------------------------------------------
+
+The pings should complete showing the connectivity between the VMs. The watch
+command should show the new ICMP rules incrementing as the ping request and
+response messages are matched against these rules and forwarded to the correct
+VM. Feel free to try pinging VM1 from VM2.

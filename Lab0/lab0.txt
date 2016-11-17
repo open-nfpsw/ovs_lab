@@ -1,0 +1,119 @@
+Lab0 - Create a new switch and add ports to it
+-------------------------------------------------------------------------------
+
+The main tool for controlling Agilio is ovs-ctl. This app allows us to start
+both OVS software and load/unload firmware from the Agilio SmartNIC. Along with
+this tool you can utilise apps that are provided with standard OVS to create
+and interface with defined switches. These are as follows:
+
+- ovs-vsctl - query/update the switch configuration
+- ovs-ofctl - CLI for monitoring switches and adding rules
+- ovs-dpctl - used to monitor and query the OVS datapath
+
+
+1. Verify Agilio OVS is running by entering the following command on the Linux
+terminal:
+
+ovs-ctl version
+
+This returns some version information of the Agilio OVS install that is
+running. It should also be noted that ‘Firewall mode’ is running - this
+enables the offloading of stateful firewall rules later in the lab.
+
+2. Create a new bridge/switch on the system and call it br0:
+
+ovs-vsctl add-br br0
+
+From here on, the switch will be referenced via the ‘br0’ identifier when
+adding rules or running queries.
+
+3. Add ports to the switch - the ports available to use within Agilio OVS
+should appear when ifconfig is run.
+
+ifconfig
+
+-------------------------------------------------------------------------------
+sdn_p0    Link encap:Ethernet  HWaddr 00:15:4d:0a:0d:97  
+          UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000 
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+
+sdn_v0.0  Link encap:Ethernet  HWaddr ae:35:7c:37:01:e0  
+          UP BROADCAST MULTICAST  MTU:1500  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000 
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+-------------------------------------------------------------------------------
+
+
+Physical ports on the Agilio SmartNIC are represented as sdn_pN while those of
+the form sdn_vX.Y represent the VFs available for each PCIe interface. Two
+virtual machines should already running on the server. These are bound to the
+representative VF ports sdn_v0.2 and sdn_v0.3. These ports, along with the
+physical port, sdn_p0, can be attached to the switch by doing the following:
+
+ovs-vsctl add-port br0 sdn_p0 -- set interface sdn_p0 ofport_request=1
+
+ovs-vsctl add-port br0 sdn_v0.2 -- set interface sdn_v0.2 ofport_request=2
+
+ovs-vsctl add-port br0 sdn_v0.3 -- set interface sdn_v0.3 ofport_request=3
+
+
+By including the option ‘ofport_request’, a request has been made to give each
+of these ports a specific number within the switch that can be used to
+reference the port. The following two commands can verify the status of the
+virtual switch and to confirm the port number references:
+
+ovs-vsctl show
+
+-------------------------------------------------------------------------------
+195f2ed8-86e0-4e88-a9df-a280ff55e566
+    Bridge "br0"
+        Port "sdn_p0"
+            Interface "sdn_p0"
+        Port "sdn_v0.2"
+            Interface "sdn_v0.2"
+        Port "sdn_v0.3"
+            Interface "sdn_v0.3"
+        Port "br0"
+            Interface "br0"
+                type: internal
+    ovs_version: "2.5.1"
+-------------------------------------------------------------------------------
+
+
+ovs-ofctl show br0
+
+-------------------------------------------------------------------------------
+OFPT_FEATURES_REPLY (xid=0x2): dpid:000000154d0a0d97
+n_tables:254, n_buffers:256
+capabilities: FLOW_STATS TABLE_STATS PORT_STATS QUEUE_STATS ARP_MATCH_IP
+actions: output enqueue set_vlan_vid set_vlan_pcp strip_vlan mod_dl_src
+mod_dl_dst mod_nw_src mod_nw_dst mod_nw_tos mod_tp_src mod_tp_dst
+ 1(sdn_p0): addr:00:15:4d:0a:0d:97
+     config:     0
+     state:      0
+     advertised: 10GB-FD AUTO_NEG AUTO_PAUSE
+     supported:  10GB-FD AUTO_NEG AUTO_PAUSE
+     speed: 0 Mbps now, 10000 Mbps max
+ 2(sdn_v0.2): addr:56:03:99:6f:3f:01
+     config:     0
+     state:      0
+     speed: 0 Mbps now, 0 Mbps max
+ 3(sdn_v0.3): addr:56:03:99:6f:3f:02
+     config:     0
+     state:      0
+     speed: 0 Mbps now, 0 Mbps max
+ LOCAL(br0): addr:00:15:4d:0a:0d:97
+     config:     PORT_DOWN
+     state:      LINK_DOWN
+     speed: 0 Mbps now, 0 Mbps max
+OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0
+-------------------------------------------------------------------------------
+
+At this stage a new switch has been created and has had several ports attached
+to it. It now ready to have rules added to it so as to define the behaviour of
+traffic on these given ports.
